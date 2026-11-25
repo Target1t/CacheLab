@@ -58,8 +58,49 @@ static void usage(const char *prog)
  */
 static void access_cache(uint64_t addr)
 {
-    (void)addr;
-    (void)tick;
+    uint64_t set_mask = ((uint64_t)1 << s) - 1;  /* s <= 30, so this is safe */
+    /* b can be 64 when s == 0, so avoid shifting by 64. */
+    uint64_t set_index = (b >= 64) ? 0 : ((addr >> b) & set_mask);
+    uint64_t tag = (b + s >= 64) ? 0 : (addr >> (b + s));
+    line_t *set = cache + (size_t)set_index * (size_t)E;
+    int i;
+
+    for (i = 0; i < E; i++) {
+        if (set[i].valid && set[i].tag == tag) {
+            /* Hit: this line becomes the most recently used one. */
+            hits++;
+            set[i].last_used = ++tick;
+            if (verbose)
+                printf(" hit");
+            return;
+        }
+    }
+
+    misses++;
+    {
+        /* Prefer the lowest-numbered invalid line, otherwise the LRU line. */
+        line_t *victim = NULL;
+        for (i = 0; i < E; i++) {
+            if (!set[i].valid) {
+                victim = &set[i];
+                break;
+            }
+        }
+        if (victim == NULL) {
+            victim = &set[0];
+            for (i = 1; i < E; i++)
+                if (set[i].last_used < victim->last_used)
+                    victim = &set[i];
+            if (verbose)
+                printf(" miss eviction");
+            evictions++;
+        } else if (verbose) {
+            printf(" miss");
+        }
+        victim->valid = 1;
+        victim->tag = tag;
+        victim->last_used = ++tick;
+    }
 }
 
 /* replay - run every data access in the trace through the cache */
